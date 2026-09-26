@@ -54,6 +54,28 @@ class Repository:
                     created_at TEXT NOT NULL,
                     UNIQUE(item_id, external_ref)
                 );
+                CREATE TABLE IF NOT EXISTS hotspots (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+                    ticket_no TEXT NOT NULL,
+                    line_id TEXT NOT NULL,
+                    detected_at TEXT NOT NULL,
+                    surface_temperature REAL NOT NULL,
+                    smoke_state TEXT NOT NULL,
+                    registered_by TEXT NOT NULL,
+                    registered_at TEXT NOT NULL,
+                    latest_temperature REAL,
+                    latest_smoke TEXT,
+                    cooling_detected_at TEXT,
+                    cooling_observed_by TEXT,
+                    cooling_recorded_at TEXT,
+                    reviewed_by TEXT,
+                    reviewed_at TEXT
+                );
+                CREATE UNIQUE INDEX IF NOT EXISTS ux_hotspots_ticket_no
+                    ON hotspots(item_id, ticket_no);
+                CREATE INDEX IF NOT EXISTS ix_hotspots_item_line
+                    ON hotspots(item_id, line_id);
                 CREATE TABLE IF NOT EXISTS audit_events (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     action TEXT NOT NULL,
@@ -156,6 +178,114 @@ class Repository:
                 (item_id,),
             ).fetchone()
         return int(row["n"])
+
+    # ---- 火场看守：热点归档 ----
+    @staticmethod
+    def _hotspot(row: sqlite3.Row) -> Dict[str, Any]:
+        return dict(row)
+
+    def insert_hotspot(self, item_id: int, ticket_no: str, line_id: str,
+                       detected_at: str, surface_temperature: float,
+                       smoke_state: str, actor: str) -> Dict[str, Any]:
+        now = utc_now()
+        try:
+            with self._lock, self.conn:
+                cur = self.conn.execute(
+                    """INSERT INTO hotspots(item_id, ticket_no, line_id, detected_at,
+                       surface_temperature, smoke_state, registered_by, registered_at,
+                       latest_temperature, latest_smoke)
+                       VALUES(?,?,?,?,?,?,?,?,?,?)""",
+                    (item_id, ticket_no, line_id, detected_at, surface_temperature,
+                     smoke_state, actor, now, surface_temperature, smoke_state),
+                )
+                hotspot_id = int(cur.lastrowid)
+        except sqlite3.IntegrityError as exc:
+            raise ConflictError("现场单号已登记") from exc
+        return self.get_hotspot(hotspot_id)
+
+    def get_hotspot(self, hotspot_id: int) -> Dict[str, Any]:
+        with self._lock:
+            row = self.conn.execute(
+                "SELECT * FROM hotspots WHERE id=?", (hotspot_id,)
+            ).fetchone()
+        if row is None:
+            raise NotFoundError("热点不存在")
+        return self._hotspot(row)
+
+    def get_hotspot_by_ticket(self, item_id: int, ticket_no: str) -> Optional[Dict[str, Any]]:
+        with self._lock:
+            row = self.conn.execute(
+                "SELECT * FROM hotspots WHERE item_id=? AND ticket_no=?",
+                (item_id, ticket_no),
+            ).fetchone()
+        return self._hotspot(row) if row is not None else None
+
+    def list_hotspots(self, item_id: int, line_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        sql = "SELECT * FROM hotspots WHERE item_id=?"
+        params: tuple = (item_id,)
+        if line_id is not None:
+            sql += " AND line_id=?"
+            params = (item_id, line_id)
+        sql += " ORDER BY line_id, detected_at, id"
+        with self._lock:
+            rows = self.conn.execute(sql, params).fetchall()
+        return [self._hotspot(row) for row in rows]
+
+    def add_cooling_observation(self, hotspot_id: int, detected_at: str,
+                                temperature: float, smoke_state: str,
+                                observer: str) -> Dict[str, Any]:
+        now = utc_now()
+        with self._lock, self.conn:
+            cur = self.conn.execute(
+                """UPDATE hotspots SET latest_temperature=?, latest_smoke=?,
+                   cooling_detected_at=?, cooling_observed_by=?, cooling_recorded_at=?,
+                   reviewed_by=NULL, reviewed_at=NULL
+                   WHERE id=?""",
+                (temperature, smoke_state, detected_at, observer, now, hotspot_id),
+            )
+            if cur.rowcount == 0:
+                raise NotFoundError("热点不存在")
+        return self.get_hotspot(hotspot_id)
+
+    def review_hotspot(self, hotspot_id: int, reviewer: str) -> Dict[str, Any]:
+        now = utc_now()
+        with self._lock, self.conn:
+            cur = self.conn.execute(
+                "UPDATE hotspots SET reviewed_by=?, reviewed_at=? WHERE id=?",
+                (reviewer, now, hotspot_id),
+            )
+            if cur.rowcount == 0:
+                raise NotFoundError("热点不存在")
+        return self.get_hotspot(hotspot_id)
+
+    def correct_hotspot(self, hotspot_id: int, surface_temperature: float,
+                        smoke_state: str, line_id: str) -> Dict[str, Any]:
+        """更正登记信息；最高温与待复测点由汇总逻辑按新值重算，不落地缓存。
+        登记温度或烟点变化时，基于旧登记的降温观测与复核一并作废，须重新复核。"""
+        with self._lock, self.conn:
+            row = self.conn.execute(
+                "SELECT surface_temperature, smoke_state FROM hotspots WHERE id=?",
+                (hotspot_id,),
+            ).fetchone()
+            if row is None:
+                raise NotFoundError("热点不存在")
+            invalidate = (float(row["surface_temperature"]) != float(surface_temperature)
+                          or row["smoke_state"] != smoke_state)
+            if invalidate:
+                self.conn.execute(
+                    """UPDATE hotspots SET surface_temperature=?, smoke_state=?, line_id=?,
+                       latest_temperature=?, latest_smoke=?, cooling_detected_at=NULL,
+                       cooling_observed_by=NULL, cooling_recorded_at=NULL,
+                       reviewed_by=NULL, reviewed_at=NULL WHERE id=?""",
+                    (surface_temperature, smoke_state, line_id,
+                     surface_temperature, smoke_state, hotspot_id),
+                )
+            else:
+                self.conn.execute(
+                    "UPDATE hotspots SET line_id=? WHERE id=?",
+                    (line_id, hotspot_id),
+                )
+        return self.get_hotspot(hotspot_id)
 
     def append_audit(self, action: str, entity_type: str, entity_id: int,
                      actor: str, detail: dict) -> Dict[str, Any]:

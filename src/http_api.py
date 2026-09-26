@@ -4,7 +4,7 @@ import json
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 from .domain import (ConflictError, DomainError, NotFoundError, PermissionDenied,
                      ValidationError)
@@ -89,6 +89,18 @@ def make_handler(service: Service, static_dir: str):
                     actor, role = self._identity()
                     del actor
                     self._json(200, {"records": service.list_records(item_id, role)})
+                elif path.startswith("/api/items/") and path.endswith("/hotspots"):
+                    item_id = int(path.split("/")[3])
+                    actor, role = self._identity()
+                    del actor
+                    line_id = parse_qs(urlparse(self.path).query).get("line_id", [None])[0]
+                    self._json(200, {"hotspots": service.list_hotspots(
+                        item_id, role, line_id)})
+                elif path.startswith("/api/items/") and path.endswith("/lines"):
+                    item_id = int(path.split("/")[3])
+                    actor, role = self._identity()
+                    del actor
+                    self._json(200, service.line_status(item_id, role))
                 elif path.startswith("/api/items/"):
                     item_id = int(path.rsplit("/", 1)[-1])
                     actor, role = self._identity()
@@ -119,6 +131,24 @@ def make_handler(service: Service, static_dir: str):
                     expected = body.get("expected_version")
                     self._json(200, service.transition(
                         item_id, target, expected, actor, role))
+                elif path.startswith("/api/items/") and path.endswith("/hotspots"):
+                    item_id = int(path.split("/")[3])
+                    self._json(201, service.register_hotspot(item_id, body, actor, role))
+                elif "/hotspots/" in path and path.endswith("/cooling"):
+                    parts = path.split("/")
+                    item_id = int(parts[3]); ticket_no = unquote(parts[5])
+                    self._json(200, service.add_cooling_observation(
+                        item_id, ticket_no, body, actor, role))
+                elif "/hotspots/" in path and path.endswith("/review"):
+                    parts = path.split("/")
+                    item_id = int(parts[3]); ticket_no = unquote(parts[5])
+                    self._json(200, service.review_hotspot(
+                        item_id, ticket_no, actor, role))
+                elif "/hotspots/" in path and path.endswith("/correct"):
+                    parts = path.split("/")
+                    item_id = int(parts[3]); ticket_no = unquote(parts[5])
+                    self._json(200, service.correct_hotspot(
+                        item_id, ticket_no, body, actor, role))
                 else:
                     self._json(404, {"error": "not_found"})
             except Exception as exc:

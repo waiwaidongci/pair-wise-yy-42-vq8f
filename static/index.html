@@ -1,1 +1,15 @@
-<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>山火事件指挥与离线人员调度</title><style>body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;max-width:900px;margin:2rem auto;padding:0 1rem;color:#17212b}pre{background:#f4f7f9;padding:1rem;overflow:auto}button{padding:.55rem 1rem}</style></head><body><h1>山火事件指挥与离线人员调度</h1><p>维护火线、风向、资源和任务区，合并离线现场记录并防止人员重复分配</p><p>火线长度、风向变化和离线记录数量影响风险等级；同一资源不能同时出现在多个活动任务中。</p><button onclick="loadItems()">刷新列表</button><pre id="out">使用X-Actor和X-Role请求头调用接口。</pre><script>async function loadItems(){const r=await fetch('/api/items',{headers:{'X-Actor':'demo','X-Role':'viewer'}});document.getElementById('out').textContent=JSON.stringify(await r.json(),null,2)}</script></body></html>
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>山火事件指挥与离线人员调度</title><style>body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;max-width:960px;margin:2rem auto;padding:0 1rem;color:#17212b}pre{background:#f4f7f9;padding:1rem;overflow:auto}button{padding:.55rem 1rem;margin-right:.5rem}.block{color:#b42318;font-weight:600}.ok{color:#067647;font-weight:600}</style></head><body><h1>山火事件指挥与离线人员调度</h1><p>维护火线、风向、资源和任务区，合并离线现场记录并防止人员重复分配</p><p>火线长度、风向变化和离线记录数量影响风险等级；同一资源不能同时出现在多个活动任务中。</p><h2>火场看守与复燃判定</h2><p>每条热点登记现场单号、火线编号、探测时刻、地表温度和烟点状态；同号重放返回首条，降温观测须由另一名巡线员复核。任一火线仍有超过80℃热点、烟点未复测或降温未复核时，火场停在原状态。</p><label>火场ID <input id="fid" value="1" size="4"></label>
+<button onclick="loadItems()">刷新火场列表</button>
+<button onclick="loadLines()">查看火线复燃态势</button>
+<pre id="out">使用X-Actor和X-Role请求头调用接口。</pre>
+<script>
+const H={'X-Actor':'demo','X-Role':'viewer'};
+function fmtLines(data){
+  const lines=Object.entries(data.lines||{}).map(([id,s])=>
+    `火线 ${id}：最高温 ${s.max_temperature===null?'-':s.max_temperature+'℃'}；待复测点 ${s.pending_retest.length?s.pending_retest.join(', '):'无'}`);
+  const head=data.can_declare_controlled?'【可申报已控】':'【火场停在原状态】';
+  return head+'\n'+(lines.join('\n')||'（暂无热点登记）')+'\n\n'+(data.mopup_blockers.length?data.mopup_blockers.join('\n'):'无复燃阻断项');
+}
+async function loadItems(){const r=await fetch('/api/items',{headers:H});document.getElementById('out').textContent=JSON.stringify(await r.json(),null,2)}
+async function loadLines(){const id=document.getElementById('fid').value;const r=await fetch(`/api/items/${id}/lines`,{headers:H});const data=await r.json();document.getElementById('out').textContent=r.ok?fmtLines(data):JSON.stringify(data,null,2)}
+</script></body></html>
