@@ -1,1 +1,13 @@
-<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>山火事件指挥与离线人员调度</title><style>body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;max-width:900px;margin:2rem auto;padding:0 1rem;color:#17212b}pre{background:#f4f7f9;padding:1rem;overflow:auto}button{padding:.55rem 1rem}</style></head><body><h1>山火事件指挥与离线人员调度</h1><p>维护火线、风向、资源和任务区，合并离线现场记录并防止人员重复分配</p><p>火线长度、风向变化和离线记录数量影响风险等级；同一资源不能同时出现在多个活动任务中。</p><button onclick="loadItems()">刷新列表</button><pre id="out">使用X-Actor和X-Role请求头调用接口。</pre><script>async function loadItems(){const r=await fetch('/api/items',{headers:{'X-Actor':'demo','X-Role':'viewer'}});document.getElementById('out').textContent=JSON.stringify(await r.json(),null,2)}</script></body></html>
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>山火事件指挥与离线人员调度</title><style>body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;max-width:900px;margin:2rem auto;padding:0 1rem;color:#17212b}pre{background:#f4f7f9;padding:1rem;overflow:auto}button{padding:.55rem 1rem}input{padding:.5rem}table{border-collapse:collapse;width:100%;margin-top:1rem}td,th{border:1px solid #d4dde3;padding:.4rem .6rem;text-align:left}.warn{color:#b3261e}</style></head><body><h1>山火事件指挥与离线人员调度</h1><p>维护火线、风向、资源和任务区，合并离线现场记录并防止人员重复分配</p><p>火线长度、风向变化和离线记录数量影响风险等级；同一资源不能同时出现在多个活动任务中。</p><button onclick="loadItems()">刷新火场列表</button><div style="margin-top:1rem"><label>火场ID：<input id="iid" value="1" size="4"></label> <button onclick="loadHotspots()">查看看守热点与火线汇总</button></div><h3>各火线最高温与待复测点</h3><table id="lines"><thead><tr><th>火线编号</th><th>最高地表温度(℃)</th><th>待复测烟点</th><th>待复测现场单号</th></tr></thead><tbody></tbody></table><pre id="out">使用X-Actor和X-Role请求头调用接口。</pre><script>
+const H={'X-Actor':'demo','X-Role':'viewer'};
+async function loadItems(){const r=await fetch('/api/items',{headers:H});document.getElementById('out').textContent=JSON.stringify(await r.json(),null,2)}
+async function loadHotspots(){
+ const id=document.getElementById('iid').value;
+ const r=await fetch('/api/items/'+id+'/hotspots',{headers:H});const data=await r.json();
+ const body=document.querySelector('#lines tbody');body.innerHTML='';
+ if(r.ok){(data.firelines||[]).forEach(l=>{const tr=document.createElement('tr');
+  tr.innerHTML='<td>'+l.fireline+'</td><td>'+(l.max_temp===null?'-':l.max_temp)+'</td><td>'+
+   '<td class="'+(l.pending_retest?'warn':'')+'">'+l.pending_retest+'</td><td>'+(l.pending_retest_tickets.join('、')||'-')+'</td>';body.appendChild(tr)});}
+ document.getElementById('out').textContent=JSON.stringify(data,null,2)
+}
+</script></body></html>

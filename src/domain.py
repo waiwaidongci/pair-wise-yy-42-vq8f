@@ -1,5 +1,6 @@
 from __future__ import annotations
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Dict, Optional
 class ErrorKind:
     VALIDATION="validation"; NOT_FOUND="not_found"; FORBIDDEN="forbidden"; CONFLICT="conflict"
@@ -28,6 +29,17 @@ def require_text(value,field,max_length=2000):
 def normalize_severity(value):
     if value not in SEVERITIES: raise ValidationError("severity不在允许范围内")
     return value
+def normalize_smoke_status(value):
+    if value not in ('smoking','clear'): raise ValidationError("smoke_status必须是smoking或clear")
+    return value
+def require_timestamp(value,field):
+    if not isinstance(value,str) or not value.strip(): raise ValidationError(f"{field}不能为空")
+    text=value.strip()
+    try:
+        parsed=datetime.fromisoformat(text.replace('Z','+00:00'))
+    except ValueError: raise ValidationError(f"{field}必须是ISO-8601时间")
+    if parsed.tzinfo is None: raise ValidationError(f"{field}必须带时区")
+    return text
 def require_number(value,field,minimum=0.0):
     if isinstance(value,bool): raise ValidationError(f"{field}必须是数字")
     try: number=float(value)

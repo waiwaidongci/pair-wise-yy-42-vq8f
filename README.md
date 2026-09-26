@@ -30,9 +30,17 @@ python3 app.py --db ./data.db --port 8319
 - `GET /api/items/{id}`
 - `POST /api/items/{id}/records`
 - `POST /api/items/{id}/transition`，必须提交`expected_version`
+- `GET /api/items/{id}/hotspots`，返回热点列表及每条火线的最高温、待复测点汇总
+- `POST /api/items/{id}/hotspots`，看守热点登记（现场单号`ticket_no`、火线`fireline`、探测时刻`detected_at`、地表温度`surface_temp`、烟点状态`smoke_status`）；同号重放返回首条（HTTP 200，`replayed=true`），不重复计数
+- `POST /api/items/{id}/hotspots/{ticket_no}/cooling`，更晚的降温观测（须晚于探测时刻，只允许一次）
+- `POST /api/items/{id}/hotspots/{ticket_no}/review`，由另一名巡线员（不同于登记人与观测人）复核降温；原始登记与观测均保留
+- `POST /api/items/{id}/hotspots/{ticket_no}/smoke-retest`，烟点复测
+- `POST /api/items/{id}/hotspots/{ticket_no}/correct`，热点更正（最高温与待复测点按新值重算，旧值进审计链）
 - `GET /api/audit`
 
 允许角色：field_commander, incident_commander, logistics, viewer。火线长度、风向变化和离线记录数量影响风险等级；同一资源不能同时出现在多个活动任务中。
+
+火场转入看守（`contained`）后才能登记热点。宣布控制（`controlled`）前满足任一条件即拦截、火场停在原状态：任一火线仍有超过80℃的热点（降温以复核值为准）、仍有烟点未复测、降温结果未经另一名巡线员复核。判定逻辑在`src/rules.py`，热点归档在`src/repository.py`，HTTP与页面入口在`src/http_api.py`和`static/index.html`。
 
 ## 测试
 

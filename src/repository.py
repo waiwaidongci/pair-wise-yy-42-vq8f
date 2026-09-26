@@ -54,6 +54,27 @@ class Repository:
                     created_at TEXT NOT NULL,
                     UNIQUE(item_id, external_ref)
                 );
+                CREATE TABLE IF NOT EXISTS hotspots (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+                    ticket_no TEXT NOT NULL,
+                    fireline TEXT NOT NULL,
+                    detected_at TEXT NOT NULL,
+                    surface_temp REAL NOT NULL,
+                    smoke_status TEXT NOT NULL CHECK(smoke_status IN ('smoking','clear')),
+                    created_by TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    cooling_at TEXT,
+                    cooling_temp REAL,
+                    cooling_by TEXT,
+                    review_at TEXT,
+                    review_temp REAL,
+                    review_by TEXT,
+                    smoke_retest_status TEXT CHECK(smoke_retest_status IN ('smoking','clear')),
+                    smoke_retest_at TEXT,
+                    smoke_retest_by TEXT,
+                    UNIQUE(item_id, ticket_no)
+                );
                 CREATE TABLE IF NOT EXISTS audit_events (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     action TEXT NOT NULL,
@@ -156,6 +177,93 @@ class Repository:
                 (item_id,),
             ).fetchone()
         return int(row["n"])
+
+    def insert_hotspot(self, item_id: int, ticket_no: str, fireline: str,
+                       detected_at: str, surface_temp: float, smoke_status: str,
+                       actor: str) -> Optional[Dict[str, Any]]:
+        now = utc_now()
+        try:
+            with self._lock, self.conn:
+                cur = self.conn.execute(
+                    """INSERT INTO hotspots(item_id, ticket_no, fireline, detected_at,
+                       surface_temp, smoke_status, created_by, created_at)
+                       VALUES(?,?,?,?,?,?,?,?)""",
+                    (item_id, ticket_no, fireline, detected_at, surface_temp,
+                     smoke_status, actor, now),
+                )
+                hotspot_id = int(cur.lastrowid)
+        except sqlite3.IntegrityError:
+            # 同号重放：不写新记录，返回首条
+            return None
+        return self.get_hotspot_by_ticket(item_id, ticket_no)
+
+    def get_hotspot(self, hotspot_id: int) -> Dict[str, Any]:
+        with self._lock:
+            row = self.conn.execute(
+                "SELECT * FROM hotspots WHERE id=?", (hotspot_id,)
+            ).fetchone()
+        if row is None:
+            raise NotFoundError("热点不存在")
+        return dict(row)
+
+    def get_hotspot_by_ticket(self, item_id: int, ticket_no: str) -> Dict[str, Any]:
+        with self._lock:
+            row = self.conn.execute(
+                "SELECT * FROM hotspots WHERE item_id=? AND ticket_no=?",
+                (item_id, ticket_no),
+            ).fetchone()
+        if row is None:
+            raise NotFoundError("热点不存在")
+        return dict(row)
+
+    def list_hotspots(self, item_id: int) -> List[Dict[str, Any]]:
+        with self._lock:
+            rows = self.conn.execute(
+                "SELECT * FROM hotspots WHERE item_id=? ORDER BY id", (item_id,)
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def record_cooling(self, hotspot_id: int, observed_at: str,
+                       surface_temp: float, actor: str) -> None:
+        with self._lock, self.conn:
+            self.conn.execute(
+                """UPDATE hotspots SET cooling_at=?, cooling_temp=?, cooling_by=?
+                   WHERE id=?""",
+                (observed_at, surface_temp, actor, hotspot_id),
+            )
+
+    def review_cooling(self, hotspot_id: int, review_at: str,
+                       confirmed_temp: float, actor: str) -> None:
+        with self._lock, self.conn:
+            self.conn.execute(
+                """UPDATE hotspots SET review_at=?, review_temp=?, review_by=?
+                   WHERE id=?""",
+                (review_at, confirmed_temp, actor, hotspot_id),
+            )
+
+    def retest_smoke(self, hotspot_id: int, retest_at: str, smoke_status: str,
+                     actor: str) -> None:
+        with self._lock, self.conn:
+            self.conn.execute(
+                """UPDATE hotspots SET smoke_retest_status=?, smoke_retest_at=?,
+                   smoke_retest_by=? WHERE id=?""",
+                (smoke_status, retest_at, actor, hotspot_id),
+            )
+
+    def correct_hotspot(self, hotspot_id: int, fields: Dict[str, Any]) -> None:
+        allowed = ("surface_temp", "smoke_status", "fireline")
+        sets, params = [], []
+        for key in allowed:
+            if key in fields:
+                sets.append(f"{key}=?")
+                params.append(fields[key])
+        if not sets:
+            return
+        params.append(hotspot_id)
+        with self._lock, self.conn:
+            self.conn.execute(
+                f"UPDATE hotspots SET {', '.join(sets)} WHERE id=?", params
+            )
 
     def append_audit(self, action: str, entity_type: str, entity_id: int,
                      actor: str, detail: dict) -> Dict[str, Any]:
